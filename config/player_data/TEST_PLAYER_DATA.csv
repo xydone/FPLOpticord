@@ -1,0 +1,38 @@
+Pos,ID,Name,BV,SV,Team,34_xMins,34_Pts,
+G,581,-,4.2,4.2,-,90,10
+D,418,-,5.6,5.6,-,90,10
+D,415,-,5.5,5.5,-,90,10
+D,533,-,5.0,5.0,-,90,10
+M,71,-,6.0,6.0,-,90,10
+M,182,-,10.6,10.6,-,90,10
+M,328,-,13.8,13.8,-,90,10
+M,99,-,8.0,8.0,-,90,10
+F,401,-,9.6,9.4,-,90,10
+F,541,-,6.9,6.9,-,90,10
+F,148,-,5.5,5.5,-,90,10
+G,185,-,4.5,4.5,-,90,10
+M,78,-,5.7,5.7,-,90,10
+D,122,-,4.9,4.9,-,90,10
+D,720,-,4.0,4.0,-,90,10
+D,1,-,4.0,4.0,-,90,12
+D,722,-,4.0,4.0,-,90,11
+AM,MUN,MUN,0.8,0.8,Man Utd,-,10
+AM,FUL,FUL,1.1,1.1,Fulham,-,10
+AM,IPS,IPS,0.5,0.5,Ipswich,-,10
+AM,LIV,LIV,1.5,1.5,Liverpool,-,10
+AM,ARS,ARS,1.5,1.5,Arsenal,-,10
+AM,WOL,WOL,0.8,0.8,Wolves,-,10
+AM,EVE,EVE,0.5,0.5,Everton,-,10
+AM,BHA,BHA,1.1,1.1,Brighton,-,10
+AM,NEW,NEW,1.5,1.5,Newcastle,-,10
+AM,SOU,SOU,0.5,0.5,Southampton,-,10
+AM,NFO,NFO,1.1,1.1,Nott'm Forest,-,10
+AM,BOU,BOU,1.1,1.1,Bournemouth,-,10
+AM,WHU,WHU,0.5,0.5,West Ham,-,10
+AM,AVL,AVL,0.8,0.8,Aston Villa,-,10
+AM,BRE,BRE,0.8,0.8,Brentford,-,10
+AM,CRY,CRY,0.8,0.8,Crystal Palace,-,10
+AM,CHE,CHE,1.5,1.5,Chelsea,-,10
+AM,MCI,MCI,1.5,1.5,Man City,-,10
+AM,LEI,LEI,0.5,0.5,Leicester,-,10
+AM,TOT,TOT,1.1,1.1,Spurs,-,10

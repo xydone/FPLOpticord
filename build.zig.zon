@@ -1,0 +1,32 @@
+.{
+    .name = .fplopticord,
+
+    .version = "0.0.0",
+
+    .fingerprint = 0x430448adaf65d35c, // Changing this has security and trust implications.
+
+    .minimum_zig_version = "0.14.0",
+
+    .dependencies = .{
+        .discordzig = .{
+            .url = "git+https://codeberg.org/yuzu/discord.zig#84bf0bac63a4009ae805e6b31314ec232f456ac8",
+            .hash = "discordzig-0.0.0-KYtlUzixCABFEhFUwFhMMnrsivJ8esaCPj329yYvLxDv",
+        },
+        .zqlite = .{
+            .url = "git+https://github.com/karlseguin/zqlite.zig?ref=master#3cd6edca7d735fe9a8545c699091cfcebe1feb7f",
+            .hash = "zqlite-0.0.0-RWLaY0Z7lQApOOwYrJMyZomy1GlA3vRnmtrTaWQ2BSQK",
+        },
+        .zdt = .{
+            .url = "git+https://github.com/FObersteiner/zdt#d9dc11e913370775ed57a1c43a81350cea1fda8e",
+            .hash = "zdt-0.6.2-xr0_vLG7EAAN4dsgKs-oJ4Mr5LirR4c69Iu0TTc1sbDx",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        // For example...
+        //"LICENSE",
+        //"README.md",
+    },
+}
