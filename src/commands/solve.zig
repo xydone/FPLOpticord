@@ -30,7 +30,7 @@ pub const MoveList = struct {
 };
 
 pub fn regular(session: *Shard, message: Discord.Message, content_it: *types.ContentIterator, shared: Shared) !void {
-    const allocator = std.heap.smp_allocator;
+    const allocator = shared.allocator;
     var result = try session.sendMessage(message.channel_id, .{
         .content = "Starting regular run...",
     });
@@ -121,7 +121,7 @@ pub fn regular(session: *Shard, message: Discord.Message, content_it: *types.Con
                     break :outer;
                 },
                 .solver_error => |solver_error| {
-                    std.debug.print("Solver error caught: {s}\n", .{solver_error.message});
+                    std.debug.print("Solver error caught: {d}\n", .{solver_error.message});
                     const msg = Discord.Partial(Discord.CreateMessage){
                         .content = "The solver ran into an error!",
                     };

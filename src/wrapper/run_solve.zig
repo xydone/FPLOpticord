@@ -2,6 +2,7 @@ const std = @import("std");
 const types = @import("../types.zig");
 const dotenv = @import("../util/dotenv.zig");
 const Shared = @import("../events/event_handler.zig").Shared;
+const panic = @import("../util/util.zig").panic;
 
 pub const Response = struct {
     mutex: std.Thread.Mutex,
@@ -30,7 +31,7 @@ pub const Response = struct {
 };
 
 pub fn regular(response: *Response, allocator: std.mem.Allocator, config: []const u8) void {
-    var env = dotenv.init(allocator, ".env") catch @panic("Can't get env");
+    var env = dotenv.init(allocator, ".env") catch panic(allocator, "Can't get env", .{});
     defer env.deinit();
     const shared = Shared.get();
     var env_map = std.process.getEnvMap(allocator) catch unreachable;
@@ -40,7 +41,8 @@ pub fn regular(response: *Response, allocator: std.mem.Allocator, config: []cons
 
     //NOTE: Calling python.exe will bypass the Python installation (if one exists) in WSL. To use the WSL version, use `python` instead.
     const python_executable = if (shared.is_wsl) "python.exe" else "python";
-    const argv = &.{ python_executable, "-u", "solve_regular.py", config_location };
+    //using -W ignore::FutureWarning due to Pandas' .replace(...) downcast deprecation warning
+    const argv = &.{ python_executable, "-W", "ignore::FutureWarning", "-u", "solve_regular.py", config_location };
     var child = std.process.Child.init(argv, allocator);
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Pipe;
@@ -48,8 +50,8 @@ pub fn regular(response: *Response, allocator: std.mem.Allocator, config: []cons
     child.cwd = shared.solver_path;
     child.expand_arg0 = .no_expand;
     child.progress_node = std.Progress.Node.none;
-    env_map.put("PYTHONIOENCODING", "utf-8") catch |err| std.debug.panic("Failed to put PYTHONIOENCODING into env-map due to {}", .{err});
-    if (shared.is_wsl) env_map.put("WSLENV", "PYTHONIOENCODING") catch |err| std.debug.panic("Failed to put WSLENV into env-map due to {}", .{err});
+    env_map.put("PYTHONIOENCODING", "utf-8") catch |err| panic(allocator, "Failed to put PYTHONIOENCODING into env-map due to {}", .{err});
+    if (shared.is_wsl) env_map.put("WSLENV", "PYTHONIOENCODING") catch |err| panic(allocator, "Failed to put WSLENV into env-map due to {}", .{err});
 
     child.env_map = &env_map;
 
@@ -76,30 +78,26 @@ pub fn regular(response: *Response, allocator: std.mem.Allocator, config: []cons
         const process_state = parseOutput(buf[0..stdout_len], response, allocator);
 
         if (process_state.running == false) {
-            _ = child.kill() catch std.debug.panic("Could not terminate process", .{});
+            _ = child.kill() catch panic(allocator, "Could not terminate process", .{});
             return;
         }
     }
-    var stderr = std.ArrayList(u8).init(allocator);
-    defer stderr.deinit();
 
-    var stderr_buf: [1028]u8 = undefined;
+    var stderr_buf: [2056]u8 = undefined;
     // read from stderr
-    const stderr_len = stderr_reader.readAtLeast(&stderr_buf, 1024) catch |err| {
+    const stderr_len = stderr_reader.read(&stderr_buf) catch |err| {
         std.debug.print("stderr reader failed with: {}\n", .{err});
         return;
     };
 
     // check if the solver ran into an error
-    if (stderr.items.len != 0) {
-        std.debug.print("caught error in solver!\n", .{});
-        // const error_message = try std.mem.join(allocator, "", stderr.toOwnedSlice() catch @panic("OOM!"));
-        response.append(.{ .solver_error = SolverError{ .message = stderr_buf[0..stderr_len] } }) catch @panic("Cannot append error");
+    if (stderr_len != 0) {
+        response.append(.{ .solver_error = SolverError{ .message = stderr_buf[0..stderr_len] } }) catch panic(allocator, "Cannot append", .{});
         return;
     }
 
     _ = child.wait() catch unreachable;
-    response.append(.{ .done = Done{} }) catch @panic("Cannot append");
+    response.append(.{ .done = Done{} }) catch panic(allocator, "Cannot append", .{});
 }
 
 const SolveProcessState = struct { running: bool };
@@ -113,13 +111,13 @@ fn parseOutput(
         const str = std.fmt.allocPrint(allocator, "{s}", .{str_a}) catch @panic("OOM!");
         const state = State.fromString(str);
         const result = Result.fromString(str, allocator, state) catch |err| {
-            std.debug.panic("Getting result failed with {}\nProvided message is: \"{s}\"", .{ err, message });
+            panic(allocator, "Getting result failed with {}\nProvided message is: \"{s}\"", .{ err, message });
         };
         if (result == .incorrect_config) {
-            response.append(.{ .incorrect_config = IncorrectConfig{} }) catch @panic("Cannot append");
+            response.append(.{ .incorrect_config = IncorrectConfig{} }) catch panic(allocator, "Cannot append", .{});
             return .{ .running = false };
         }
-        response.append(result) catch @panic("Cannot append");
+        response.append(result) catch panic(allocator, "Cannot append", .{});
     }
     return .{ .running = true };
 }

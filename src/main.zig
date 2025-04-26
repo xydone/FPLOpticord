@@ -4,11 +4,11 @@ const dotenv = @import("util/dotenv.zig");
 const Cache = Discord.cache.TableTemplate{};
 const Shard = Discord.Shard(Cache);
 const builtin = @import("builtin");
+const panic = @import("util/util.zig").panic;
 
 const DiscordHandler = @import("gateway/discord_handler.zig");
 const EventHandler = @import("events/event_handler.zig");
 const Shared = @import("events/event_handler.zig").Shared;
-const wslpath = @import("util/util.zig").wslpath;
 
 //GUILDS, GUILD_MESSAGES, MESSAGE_CONTENT = 33281
 //GUILDS, GUILD_MESSAGES, MESSAGE_CONTENT, GUILD_MESSAGE_REACTIONS = 34305
@@ -27,23 +27,7 @@ pub fn main() !void {
     var discord_handler = DiscordHandler.init(allocator);
     defer discord_handler.deinit();
 
-    const is_wsl = Shared.isWSL(allocator);
-
-    const env_solver_path = env.get("optimization-tools-path") orelse @panic("No python solver path");
-    const config_path = try std.fs.cwd().realpathAlloc(allocator, "./config");
-    defer allocator.free(config_path);
-
-    const solver_path = if (is_wsl) try wslpath(allocator, env_solver_path, .from_windows_to_wsl) else env_solver_path;
-    defer allocator.free(solver_path);
-    const config_folder_path = if (is_wsl) try wslpath(allocator, config_path, .from_wsl_to_windows) else config_path;
-    defer allocator.free(config_folder_path);
-
-    Shared.init(allocator, .{
-        .allocator = allocator,
-        .is_wsl = is_wsl,
-        .solver_path = solver_path,
-        .config_folder_path = config_folder_path,
-    });
+    try Shared.init(allocator);
     defer Shared.deinit();
 
     try discord_handler.start(.{
@@ -67,6 +51,8 @@ pub fn main() !void {
 }
 
 const copyFileAndBackup = @import("util/util.zig").copyFileAndBackup;
+const wslpath = @import("util/util.zig").wslpath;
+
 const Tests = @import("tests/environment.zig");
 
 test "Setup tests:beforeAll" {
@@ -74,22 +60,11 @@ test "Setup tests:beforeAll" {
 
     try Tests.TestEnvironment.init();
     var test_env = Tests.test_env;
+    try Shared.init(test_env.allocator);
+    const shared = Shared.get();
 
-    const is_wsl = Shared.isWSL(allocator);
-
-    const env_solver_path = test_env.env.get("optimization-tools-path") orelse @panic("No python solver path");
-    const config_path = try std.fs.cwd().realpathAlloc(allocator, "./config");
-    // defer allocator.free(config_path);
-
-    const solver_path = if (is_wsl) try wslpath(allocator, env_solver_path, .from_windows_to_wsl) else env_solver_path;
-    const config_folder_path = if (is_wsl) try wslpath(allocator, config_path, .from_wsl_to_windows) else config_path;
-
-    Shared.init(allocator, .{
-        .allocator = allocator,
-        .is_wsl = is_wsl,
-        .solver_path = solver_path,
-        .config_folder_path = config_folder_path,
-    });
+    const env_solver_path = test_env.env.get("optimization-tools-path") orelse panic(allocator, "No python solver path", .{});
+    const solver_path = if (shared.is_wsl) try wslpath(allocator, env_solver_path, .from_windows_to_wsl) else env_solver_path;
 
     const player_data_path = try std.fs.cwd().realpathAlloc(allocator, "./config/player_data/");
     defer allocator.free(player_data_path);
@@ -119,7 +94,9 @@ test "Teardown tests:afterAll" {
     var test_env = Tests.test_env;
     defer test_env.deinit();
     const shared = Shared.get();
-    const env_solver_path = test_env.env.get("optimization-tools-path") orelse @panic("No python solver path");
+    defer Shared.deinit();
+
+    const env_solver_path = test_env.env.get("optimization-tools-path") orelse panic(shared.allocator, "No python solver path", .{});
     const solver_path = if (shared.is_wsl) try wslpath(test_env.allocator, env_solver_path, .from_windows_to_wsl) else env_solver_path;
     // We use the testing environment allocator here as this is ran after `std.testing.allocator.deinit(...)` is executed by the test runner.
     // Using a test allocator here would result in a General protection exception.

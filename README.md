@@ -23,6 +23,7 @@ As of right now, there are no precompiled binaries, but precompiled binaries are
 
 ```
 token=<ADD DISCORD TOKEN HERE>
+prefix=<ADD YOUR BOT PREFIX HERE>
 optimization-tools-path=<ADD YOUR PATH TO THE SOLVER HERE>
 ```
 
@@ -31,6 +32,10 @@ optimization-tools-path=<ADD YOUR PATH TO THE SOLVER HERE>
 - token
 
   - Your [Discord bot](https://discord.com/developers/applications) token. It is located inside the `Bot` section under `token`. **IMPORTANT**: Do not share this with others!
+
+- prefix
+
+  - The prefix that will be added to the commands, in order to distinguish itself from other bots. (ex. `!`)
 
 - optimization-tools-path
   - The path to [/run folder](https://github.com/sertalpbilal/FPL-Optimization-Tools/tree/main/run) of the solver. If you are running this on WSL, provide the Windows path to the solver instead of the WSL one (ex. use `D:/FPL-Optimization-Tools` instead of `/mnt/d/FPL-Optimization-Tools`).

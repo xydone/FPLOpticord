@@ -1,5 +1,4 @@
 const std = @import("std");
-
 pub fn fetchFileFromAPI(allocator: std.mem.Allocator, url: []const u8) ![]u8 {
     const log = std.log.scoped(.fetchFile);
     var client = std.http.Client{ .allocator = allocator };
@@ -169,7 +168,8 @@ pub fn wslpath(
     errdefer stderr.deinit(allocator);
 
     child.spawn() catch |err| {
-        std.debug.panic(
+        panic(
+            allocator,
             "Failed to spawn wslpath child process due to {}.\n",
             .{err},
         );
@@ -180,4 +180,39 @@ pub fn wslpath(
 
     try child.collectOutput(allocator, &stdout, &stderr, 1024);
     return try std.mem.replaceOwned(u8, allocator, try stdout.toOwnedSlice(allocator), "\n", "");
+}
+
+const zdt = @import("zdt");
+pub const DatetimeOptions = enum {
+    now,
+    /// Uses custom datetime object
+    use_datetime,
+};
+
+pub fn getDatetimeString(allocator: std.mem.Allocator, datetime_options: union(DatetimeOptions) {
+    now,
+    use_datetime: struct { datetime: zdt.Datetime },
+}) ![]u8 {
+    var locale = try zdt.Timezone.tzLocal(allocator);
+    defer locale.deinit();
+    const datetime = switch (datetime_options) {
+        .now => try zdt.Datetime.now(.{ .tz = &locale }),
+        .use_datetime => |use_datetime| use_datetime.datetime,
+    };
+    var buf = std.ArrayList(u8).init(allocator);
+    defer buf.deinit();
+    // https://github.com/FObersteiner/zdt/wiki/String-parsing-and-formatting-directives
+    try datetime.toString("[%Y-%m-%d %H:%M:%S]", buf.writer());
+    return try buf.toOwnedSlice();
+}
+
+/// Custom panic handler with timestamp
+pub fn panic(allocator: std.mem.Allocator, comptime format: []const u8, args: anytype) noreturn {
+    const datetime = getDatetimeString(allocator, .now) catch {
+        // If we cannot allocate memory to print the datetime, something has gone seriously wrong.
+        std.debug.print("[???] ", .{});
+        std.debug.panic(format, args);
+    };
+    std.debug.print("{s} ", .{datetime});
+    std.debug.panic(format, args);
 }

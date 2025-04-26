@@ -2,6 +2,7 @@ const Discord = @import("discordzig");
 const Cache = Discord.cache.TableTemplate{};
 const Shard = @import("discordzig").Shard(Cache);
 const std = @import("std");
+const panic = @import("../util/util.zig").panic;
 
 allocator: std.mem.Allocator,
 sharder: Discord.Sharder(Cache),
@@ -38,7 +39,7 @@ pub fn start(self: *Self, settings: struct {
     defer self.allocator.free(body);
 
     if (res.status != std.http.Status.ok) {
-        @panic("Incorrect status\n");
+        panic(self.allocator, "Incorrect status\n", .{});
     }
 
     const parsed = try std.json.parseFromSlice(Discord.Internal.GatewayBotInfo, self.allocator, body, .{});

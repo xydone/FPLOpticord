@@ -10,17 +10,17 @@ const Shared = @import("event_handler.zig").Shared;
 pub fn messageHandler(session: Session, message: Discord.Message, shared: Shared) !void {
     const allocator = std.heap.smp_allocator;
     try handleCommand(Solve.regular, allocator, .{
-        .name = "!solveregular",
+        .name = "solveregular",
     }, session, message, shared);
     try handleCommand(Config.create, allocator, .{
-        .name = "!createconfig",
+        .name = "createconfig",
         .requirements = Requirements{ .attachment = true },
     }, session, message, shared);
     try handleCommand(Config.get, allocator, .{
-        .name = "!getconfig",
+        .name = "getconfig",
     }, session, message, shared);
     try handleCommand(Config.edit, allocator, .{
-        .name = "!editconfig",
+        .name = "editconfig",
     }, session, message, shared);
 }
 
@@ -34,7 +34,9 @@ fn handleCommand(
 ) !void {
     var content_it = std.mem.tokenizeSequence(u8, message.content.?, " ");
     _ = content_it.next();
-    if (std.ascii.startsWithIgnoreCase(message.content.?, options.name)) {
+    const command = try std.fmt.allocPrint(allocator, "{s}{s}", .{ shared.prefix, options.name });
+    defer allocator.free(command);
+    if (std.ascii.startsWithIgnoreCase(message.content.?, command)) {
         var timer = try std.time.Timer.start();
         var time_requirements: u64 = 0;
         var time_callback: u64 = 0;
@@ -78,7 +80,7 @@ const Requirements = struct {
     }
 };
 
-const zdt = @import("zdt");
+const getDatetimeString = @import("../util/util.zig").getDatetimeString;
 
 pub const MessageHandlerLogger = struct {
     allocator: std.mem.Allocator,
@@ -102,13 +104,7 @@ pub const MessageHandlerLogger = struct {
     ///
     /// TODO: make it depend on execution status
     pub fn print(self: MessageHandlerLogger) !void {
-        const locale = try zdt.Timezone.tzLocal(self.allocator);
-        const now = try zdt.Datetime.now(.{ .tz = &locale });
-        var buf = std.ArrayList(u8).init(self.allocator);
-        defer buf.deinit();
-        // https://github.com/FObersteiner/zdt/wiki/String-parsing-and-formatting-directives
-        try now.toString("[%Y-%m-%d %H:%M:%S]", buf.writer());
-        const datetime = try buf.toOwnedSlice();
+        const datetime = try getDatetimeString(self.allocator, .now);
 
         const total_time = self.times.requirements.* + self.times.callback.*;
 

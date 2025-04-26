@@ -8,9 +8,7 @@ const json = @import("../util/json.zig");
 const Shared = @import("../events/event_handler.zig").Shared;
 
 pub fn create(session: *Shard, message: Discord.Message, content_it: *std.mem.TokenIterator(u8, .sequence), shared: Shared) !void {
-    _ = shared; // autofix
-    //TODO: use one singular allocator
-    const allocator = std.heap.smp_allocator;
+    const allocator = shared.allocator;
     if (!std.mem.endsWith(u8, message.attachments[0].filename, ".json")) {
         const msg = try session.sendMessage(message.channel_id, Discord.Partial(Discord.CreateMessage){
             .content = "⚠️ The attachment is not `.json`",
@@ -68,9 +66,7 @@ pub fn create(session: *Shard, message: Discord.Message, content_it: *std.mem.To
 }
 
 pub fn get(session: *Shard, message: Discord.Message, content_it: *std.mem.TokenIterator(u8, .sequence), shared: Shared) !void {
-    _ = shared; // autofix
-    //TODO: use one singular allocator
-    const allocator = std.heap.smp_allocator;
+    const allocator = shared.allocator;
     //Expected arguments
     // 1. config name
     // 2. config page (defaults to 1)
@@ -84,7 +80,13 @@ pub fn get(session: *Shard, message: Discord.Message, content_it: *std.mem.Token
         message.author.id,
         config_name,
     });
-    const file = try std.fs.cwd().openFile(file_path, .{});
+    const file = std.fs.cwd().openFile(file_path, .{}) catch {
+        const msg = try session.sendMessage(message.channel_id, Discord.Partial(Discord.CreateMessage){
+            .content = "Config file does not exist! ❌",
+        });
+        defer msg.deinit();
+        return;
+    };
     defer file.close();
 
     var fields = std.ArrayList(Discord.EmbedField).init(allocator);
@@ -113,15 +115,24 @@ pub fn get(session: *Shard, message: Discord.Message, content_it: *std.mem.Token
         try fields.append(.{ .name = entry.key_ptr.*, .value = string, .@"inline" = true });
     }
 
+    const max_page = try std.math.divCeil(u32, it.len, LINES_PER_PAGE);
+    const is_next_page_below_max = config_page + 1 < max_page;
     const embed = Discord.Embed{
         .title = try std.fmt.allocPrint(allocator, "Config \"{s}\"", .{config_name}),
         // .description = "description",
         .color = 0x804440,
         .fields = try fields.toOwnedSlice(),
         .footer = Discord.EmbedFooter{
-            .text = try std.fmt.allocPrint(allocator, "Page {}/{}", .{ config_page, try std.math.divCeil(u32, it.len, LINES_PER_PAGE) }),
+            .text = try std.fmt.allocPrint(allocator, "Page {}/{} | Run `!getconfig {s} {}` to see the {s} page.", .{
+                config_page,
+                max_page,
+                config_name,
+                if (is_next_page_below_max) config_page + 1 else config_page - 1,
+                if (is_next_page_below_max) "next" else "previous",
+            }),
         },
     };
+
     defer allocator.free(embed.title.?);
     defer allocator.free(embed.footer.?.text);
 
@@ -134,9 +145,7 @@ pub fn get(session: *Shard, message: Discord.Message, content_it: *std.mem.Token
 }
 
 pub fn edit(session: *Shard, message: Discord.Message, content_it: *std.mem.TokenIterator(u8, .sequence), shared: Shared) !void {
-    _ = shared; // autofix
-    //TODO: use one singular allocator
-    const allocator = std.heap.smp_allocator;
+    const allocator = shared.allocator;
     //Expected arguments
     // 1. config name
     // 2. field to edit
