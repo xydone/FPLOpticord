@@ -44,6 +44,7 @@ fn handleCommand(
             .requirements = &time_requirements,
             .callback = &time_callback,
         });
+        try logger.printReceived();
         defer logger.print() catch {};
 
         if (options.requirements) |requirements| {
@@ -99,6 +100,14 @@ pub const MessageHandlerLogger = struct {
         requirements: *u64,
         callback: *u64,
     };
+
+    pub fn printReceived(self: MessageHandlerLogger) !void {
+        const datetime = try getDatetimeString(self.allocator, .now);
+        std.debug.print("{s} \"{s}\" received!\n", .{
+            datetime,
+            self.command,
+        });
+    }
 
     /// Coloring depends on execution time, rather than execution status.
     ///

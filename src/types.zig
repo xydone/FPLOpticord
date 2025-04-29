@@ -18,3 +18,26 @@ pub const SolverResponse = struct {
     };
 };
 pub const ContentIterator = std.mem.TokenIterator(u8, .sequence);
+
+/// Move list array which manages the memory of the `std.ArrayList` inside alongside the memory of the contents.
+pub const ManagedString = struct {
+    allocator: std.mem.Allocator,
+    list: std.ArrayList([]const u8),
+
+    pub fn init(allocator: std.mem.Allocator) ManagedString {
+        return ManagedString{ .allocator = allocator, .list = std.ArrayList([]const u8).init(allocator) };
+    }
+
+    pub fn append(self: *ManagedString, string: []const u8) !void {
+        try self.list.append(string);
+    }
+
+    pub fn deinit(
+        self: *ManagedString,
+    ) void {
+        for (self.list.items) |item| {
+            self.allocator.free(item);
+        }
+        self.list.deinit();
+    }
+};

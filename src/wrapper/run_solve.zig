@@ -67,7 +67,7 @@ pub fn regular(response: *Response, allocator: std.mem.Allocator, config: []cons
     }
     const stdout_reader = child.stdout.?.reader();
     const stderr_reader = child.stderr.?.reader();
-    var buf: [1028]u8 = undefined;
+    var buf: [2056]u8 = undefined;
     while (true) {
         const stdout_len = stdout_reader.read(&buf) catch |err| {
             std.debug.print("stdout reader failed with: {}\n", .{err});
@@ -106,18 +106,15 @@ fn parseOutput(
     response: *Response,
     allocator: std.mem.Allocator,
 ) SolveProcessState {
-    var iterator = std.mem.tokenizeSequence(u8, message, "\r\n");
-    while (iterator.next()) |str_a| {
-        const str = std.fmt.allocPrint(allocator, "{s}", .{str_a}) catch @panic("OOM!");
-        const state = State.fromString(str);
-        const result = Result.fromString(str, allocator, state) catch |err| {
-            panic(allocator, "Getting result failed with {}\nProvided message is: \"{s}\"", .{ err, message });
-        };
-        if (result == .incorrect_config) {
+    const states = Result.fromString(allocator, message) catch std.debug.panic("State parsing failed!", .{});
+    defer states.deinit();
+
+    for (states.items) |state| {
+        if (state == .incorrect_config) {
             response.append(.{ .incorrect_config = IncorrectConfig{} }) catch panic(allocator, "Cannot append", .{});
             return .{ .running = false };
         }
-        response.append(result) catch panic(allocator, "Cannot append", .{});
+        response.append(state) catch panic(allocator, "Cannot append", .{});
     }
     return .{ .running = true };
 }
@@ -126,11 +123,12 @@ const Outputs = enum {
     incorrect_config,
     up_to_date,
     result_summary,
-    solution,
-    gameweek_moves,
+    solution_start,
+    solution_end,
     unparsed,
     done,
     solver_error,
+    gameweek,
 
     const RawOutputs = enum {
         @"Your repository is up-to-date.",
@@ -138,83 +136,43 @@ const Outputs = enum {
     };
 };
 
-const State = struct {
-    state: Outputs,
-    value: []const u8,
-
-    pub fn fromString(buf: []u8) State {
-        var solution_it = std.mem.tokenizeSequence(u8, buf, "Solution ");
-        if (solution_it.next()) |solution| {
-            if (!std.mem.eql(u8, buf, solution)) {
-                if (solution_it.next()) |after_solution| {
-                    return State{ .state = .solution, .value = after_solution };
-                }
-                return State{ .state = .solution, .value = solution };
-            }
-        }
-        var gameweek_it = std.mem.tokenizeSequence(u8, buf, "\tGW");
-        if (gameweek_it.peek()) |gw| {
-            if (!std.mem.eql(u8, buf, gw)) {
-                return State{ .state = .gameweek_moves, .value = gw };
-            }
-        }
-        if (std.mem.startsWith(u8, buf, "Warning: Configuration file")) {
-            return State{ .state = .incorrect_config, .value = buf };
-        }
-        return .{ .state = .unparsed, .value = buf };
-    }
-};
-
 pub const Result = union(Outputs) {
     incorrect_config: IncorrectConfig,
     up_to_date: UpToDate,
     result_summary: ResultSummary,
-    solution: Solution,
-    gameweek_moves: GameweekMoves,
+    solution_start: SolutionStart,
+    solution_end: SolutionEnd,
     unparsed: Unparsed,
     done: Done,
     solver_error: SolverError,
+    gameweek: Gameweek,
 
-    // Depending on the result type, caller might own memory. `.deinit(...)` should be called
-    pub fn fromString(str: []u8, allocator: std.mem.Allocator, state: State) !Result {
-        const enums = std.meta.stringToEnum(Outputs.RawOutputs, str) orelse {
-            switch (state.state) {
-                Outputs.solution => {
-                    return .{ .solution = Solution{ .number = try std.fmt.parseInt(u16, state.value, 10), .buf = str } };
-                },
-                Outputs.gameweek_moves => {
-                    var gw_moves_it = std.mem.tokenizeSequence(u8, state.value, ": ");
-                    const gameweek = gw_moves_it.next().?;
-                    const moves = gw_moves_it.next().?;
-                    return .{ .gameweek_moves = GameweekMoves{ .gameweek = try std.fmt.parseInt(u6, gameweek, 10), .moves = moves, .buf = str } };
-                },
-                Outputs.incorrect_config => {
-                    allocator.free(str);
-                    return .{ .incorrect_config = IncorrectConfig{} };
-                },
-                else => {
-                    allocator.free(str);
-                    return .{ .unparsed = Unparsed{} };
-                },
-            }
-        };
-        allocator.free(str);
-        //Meant for lines which can be matched with the whole text
-        return switch (enums) {
-            .@"Your repository is up-to-date." => .{ .up_to_date = UpToDate{} },
-            .@"Result Summary" => .{ .result_summary = ResultSummary{} },
-        };
+    /// Caller owns memory
+    pub fn fromString(allocator: std.mem.Allocator, buf: []u8) !std.ArrayList(Result) {
+        // std.debug.print("=== buf start: ===\n{s}\n=== buf end ==\n", .{buf});
+        var state_list = std.ArrayList(Result).init(allocator);
+        if (try Gameweek.parse(buf, allocator, &state_list)) return state_list;
+        if (state_list.items.len == 0) {
+            const unparsed = Result{ .unparsed = Unparsed{} };
+            try state_list.append(unparsed);
+            return state_list;
+        }
+        unreachable;
     }
 
-    pub fn deinit(self: Result, allocator: std.mem.Allocator) void {
-        switch (self) {
-            .gameweek_moves => |inner| {
-                allocator.free(inner.buf);
+    pub fn deinitSlice(slice: []Result, allocator: std.mem.Allocator) void {
+        for (slice) |result| {
+            result.deinitAny(allocator);
+        }
+    }
+
+    pub fn deinitAny(result: Result, allocator: std.mem.Allocator) void {
+        switch (result) {
+            inline else => |any| {
+                if (std.meta.hasFn(@TypeOf(any), "deinit")) {
+                    any.deinit(allocator);
+                }
             },
-            .solution => |inner| {
-                allocator.free(inner.buf);
-            },
-            else => {},
         }
     }
 };
@@ -222,9 +180,13 @@ pub const Result = union(Outputs) {
 const IncorrectConfig = struct {};
 const UpToDate = struct {};
 const ResultSummary = struct {};
-const Solution = struct {
-    number: u32,
-    buf: []const u8,
+const SolutionStart = struct {};
+const SolutionEnd = struct {};
+
+pub const Transfers = struct {
+    action: TransferAction,
+    player: []const u8,
+
     pub fn format(
         self: @This(),
         comptime fmt: []const u8,
@@ -233,16 +195,30 @@ const Solution = struct {
     ) !void {
         _ = fmt; // autofix
         _ = options; // autofix
-        try writer.writeAll("Solution{ ");
-        try writer.print(".number = {d}, .buf = \"{s}\"", .{
-            self.number, self.buf,
-        });
+
+        try writer.writeAll("Transfers{");
+        try writer.print(" .action = {any}", .{self.action});
+        try writer.print(" .player = \"{s}\"", .{self.player});
         try writer.writeAll(" }");
     }
+
+    /// Only necessary if player was allocated, such as what happens during the solve process.
+    pub fn deinitSlice(slice: []Transfers, allocator: std.mem.Allocator) void {
+        for (slice) |transfer| {
+            allocator.free(transfer.player);
+        }
+    }
+
+    pub const TransferAction = enum { buy, sell };
 };
-const GameweekMoves = struct {
+const Gameweek = struct {
     gameweek: u8,
-    moves: []const u8,
+    chip_active: ?[]const u8,
+    free_transfers: u32,
+    paid_transfers: u8,
+    net_transfers: u8,
+    transfers: []Transfers,
+    /// meant to be freed after usage
     buf: []const u8,
 
     pub fn format(
@@ -253,17 +229,137 @@ const GameweekMoves = struct {
     ) !void {
         _ = fmt; // autofix
         _ = options; // autofix
-        try writer.writeAll("GameweekMoves{ ");
-        try writer.print(".gameweek = {d}, .moves = \"{s}\"", .{
-            self.gameweek, self.moves,
-        });
+        const chip_quotes = if (self.chip_active != null) "\"" else "";
+        try writer.writeAll("Gameweek{");
+        try writer.print(" .gameweek = {d}", .{self.gameweek});
+        try writer.print(" .chip_active: {s}{?s}{s},", .{ chip_quotes, self.chip_active, chip_quotes });
+        try writer.print(" .free_transfers = {d}", .{self.free_transfers});
+        try writer.print(" .paid_transfers = {d}", .{self.paid_transfers});
+        try writer.print(" .net_transfers = {d}", .{self.net_transfers});
+        try writer.print(" .transfers = {any}", .{self.transfers});
         try writer.writeAll(" }");
+    }
+
+    pub fn deinit(self: Gameweek, allocator: std.mem.Allocator) void {
+        Transfers.deinitSlice(self.transfers, allocator);
+        allocator.free(self.transfers);
+    }
+
+    pub fn parse(buf: []u8, allocator: std.mem.Allocator, list: *std.ArrayList(Result)) !bool {
+        // neat workaround as only the relevant lines are printed as "GW " ("GW" with space char) and the other ones that involve the string "GW" do not have the space char.
+        var gameweek_it = std.mem.tokenizeSequence(u8, buf, "GW ");
+        if (gameweek_it.next()) |gw| {
+            // delimeter not found
+            if (std.mem.eql(u8, buf, gw)) return false;
+            //this means we do have an actual solution
+            try list.append(.{ .solution_start = SolutionStart{} });
+            defer list.append(.{ .solution_end = SolutionEnd{} }) catch @panic("Cannot append!");
+            while (gameweek_it.next()) |solution| {
+                var lines = std.mem.tokenizeSequence(u8, solution, "\r\n");
+                var chip: ?[]const u8 = null;
+                //Lines template:
+                //GW: <number>
+                //ITB=<number> ...
+                //CHIP <CHIP>
+                //Buy/Sell <ID> ...
+
+                // handle gameweek number
+                const gameweek_line = lines.next().?;
+                var colon_it = std.mem.tokenizeSequence(u8, gameweek_line, ":");
+                const gameweek_number = std.fmt.parseInt(u8, colon_it.next().?, 10) catch |err| std.debug.panic("Parsing gameweek number failed with {}", .{err});
+                var itb: ?[]const u8 = undefined;
+                var ft: ?u8 = undefined;
+                var pt: ?u8 = undefined;
+                var nt: ?u8 = undefined;
+                var transfers = std.ArrayList(Transfers).init(allocator);
+                defer transfers.deinit();
+
+                line_loop: while (lines.next()) |line| {
+                    // parsing transfer values
+                    if (std.mem.startsWith(u8, line, "ITB")) {
+                        const replaced = try std.mem.replaceOwned(u8, allocator, line, ", ", "=");
+                        defer allocator.free(replaced);
+                        var it = std.mem.tokenizeSequence(u8, replaced, "=");
+                        _ = it.next();
+                        itb = it.next().?;
+                        _ = it.next();
+                        ft = try std.fmt.parseInt(u8, it.next().?, 10);
+                        _ = it.next();
+                        pt = try std.fmt.parseInt(u8, it.next().?, 10);
+                        _ = it.next();
+                        nt = try std.fmt.parseInt(u8, it.next().?, 10);
+
+                        continue :line_loop;
+                    }
+                    // parsing transfers
+                    // true - it is a buy line
+                    // false - it is a sell line
+                    // null - it is neither
+                    var transfer_action: ?Transfers.TransferAction = null;
+                    buy_or_sell: {
+                        if (std.mem.startsWith(u8, line, "Buy")) {
+                            transfer_action = .buy;
+                            break :buy_or_sell;
+                        }
+                        if (std.mem.startsWith(u8, line, "Sell")) {
+                            transfer_action = .sell;
+                            break :buy_or_sell;
+                        }
+                    }
+                    if (transfer_action != null) {
+                        var player_it = std.mem.tokenizeSequence(u8, line, " - ");
+                        _ = player_it.next();
+                        const player = try allocator.dupe(u8, player_it.next().?);
+                        try transfers.append(Transfers{
+                            .action = transfer_action.?,
+                            .player = player,
+                        });
+                        continue :line_loop;
+                    }
+                    // is chip active?
+                    if (std.mem.startsWith(u8, line, "CHIP")) {
+                        var chip_line = std.mem.tokenizeSequence(u8, line, " ");
+                        _ = chip_line.next();
+                        chip = chip_line.next().?;
+                        continue :line_loop;
+                    }
+                    // is it the separator line?
+                    if (std.mem.startsWith(u8, line, "---")) {
+                        continue :line_loop;
+                    }
+                }
+
+                try list.append(Result{ .gameweek = .{
+                    .gameweek = gameweek_number,
+                    .chip_active = chip,
+                    .free_transfers = ft orelse std.debug.panic("Not defined!", .{}),
+                    .paid_transfers = pt orelse std.debug.panic("Not defined!", .{}),
+                    .net_transfers = nt orelse std.debug.panic("Not defined!", .{}),
+                    .transfers = try transfers.toOwnedSlice(),
+                    .buf = buf,
+                } });
+            }
+        }
+        return true;
     }
 };
 const Unparsed = struct {};
 const Done = struct {};
 const SolverError = struct {
     message: []const u8,
+
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt; // autofix
+        _ = options; // autofix
+        try writer.writeAll("SolverError{");
+        try writer.print(" .message = {s}", .{self.message});
+        try writer.writeAll(" }");
+    }
 };
 
 // The FPL Optimization Tools python solver (https://github.com/sertalpbilal/FPL-Optimization-Tools) pulls player name data from the FPL API instead of the `.csv`.
@@ -281,6 +377,8 @@ test "regular solve" {
         .mutex = std.Thread.Mutex{},
     };
     defer response.list.deinit();
+    defer Result.deinitSlice(response.list.items, allocator);
+
     const shared = Shared.get();
 
     const config_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ shared.config_folder_path, "TEST_CONFIG.json" });
@@ -288,20 +386,37 @@ test "regular solve" {
 
     regular(&response, allocator, config_path);
 
-    const duped_response = try response.get(allocator);
-    defer duped_response.deinit();
+    // const duped_response = try response.get(allocator);
+    // defer duped_response.deinit();
 
-    const VALID_RESPONSES = [_][]const u8{ "M.Salah -> Fábio Vieira", "Isak -> Adu-Adjei", "M.Salah, Isak -> Fábio Vieira, Adu-Adjei" };
+    var first_iteration = [_]Transfers{
+        Transfers{ .action = .buy, .player = "Fábio Vieira" },
+        Transfers{ .action = .sell, .player = "M.Salah" },
+    };
+    var second_iteration = [_]Transfers{
+        Transfers{ .action = .buy, .player = "Adu-Adjei" },
+        Transfers{ .action = .sell, .player = "Isak" },
+    };
+    var third_iteration = [_]Transfers{
+        Transfers{ .action = .buy, .player = "Fábio Vieira" },
+        Transfers{ .action = .buy, .player = "Adu-Adjei" },
+        Transfers{ .action = .sell, .player = "Isak" },
+        Transfers{ .action = .sell, .player = "M.Salah" },
+    };
+    const iterations = [_][]Transfers{ &first_iteration, &second_iteration, &third_iteration };
 
-    for (duped_response.items, 0..) |result, i| {
+    var iteration: u8 = 0;
+
+    for (response.list.items) |result| {
         switch (result) {
-            .solution => |solution| {
-                const next = duped_response.items[i + 1];
-                try std.testing.expectEqual(34, next.gameweek_moves.gameweek);
-                try std.testing.expectEqualStrings(VALID_RESPONSES[solution.number - 1], next.gameweek_moves.moves);
+            .solution_end => iteration += 1,
+            .gameweek => |gw| {
+                for (gw.transfers, 0..) |transfers, i| {
+                    // try std.testing.expectEqual(iterations[iteration], gw.transfers);
+                    try std.testing.expectEqualStrings(iterations[iteration][i].player, transfers.player);
+                }
             },
             else => {},
         }
-        result.deinit(allocator);
     }
 }

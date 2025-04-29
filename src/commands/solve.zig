@@ -4,30 +4,8 @@ const Discord = @import("discordzig");
 const Cache = Discord.cache.TableTemplate{};
 const Shard = Discord.Shard(Cache);
 const types = @import("../types.zig");
+const ManagedString = @import("../types.zig").ManagedString;
 const Shared = @import("../events/event_handler.zig").Shared;
-
-/// Move list array which manages the memory of the `std.ArrayList` inside alongside the memory of the contents.
-pub const MoveList = struct {
-    allocator: std.mem.Allocator,
-    list: std.ArrayList([]const u8),
-
-    pub fn init(allocator: std.mem.Allocator) MoveList {
-        return MoveList{ .allocator = allocator, .list = std.ArrayList([]const u8).init(allocator) };
-    }
-
-    pub fn append(self: *MoveList, string: []const u8) !void {
-        try self.list.append(string);
-    }
-
-    pub fn deinit(
-        self: *MoveList,
-    ) void {
-        for (self.list.items) |item| {
-            self.allocator.free(item);
-        }
-        self.list.deinit();
-    }
-};
 
 pub fn regular(session: *Shard, message: Discord.Message, content_it: *types.ContentIterator, shared: Shared) !void {
     const allocator = shared.allocator;
@@ -62,8 +40,16 @@ pub fn regular(session: *Shard, message: Discord.Message, content_it: *types.Con
 
     try pool.spawn(Solver.regular, .{ &response, allocator, config_path });
 
-    var move_list = MoveList.init(allocator);
+    var move_list = ManagedString.init(allocator);
     defer move_list.deinit();
+
+    var gameweek_moves = ManagedString.init(allocator);
+    defer gameweek_moves.deinit();
+
+    var fields = std.ArrayList(Discord.EmbedField).init(allocator);
+    defer fields.deinit();
+
+    var solution_index: u8 = 0;
 
     outer: while (true) {
         const list = try response.get(allocator);
@@ -89,45 +75,76 @@ pub fn regular(session: *Shard, message: Discord.Message, content_it: *types.Con
                     const edited_msg = try session.editMessage(message.channel_id, m.id, edit_msg_content);
                     defer edited_msg.deinit();
                 },
-                .solution => |solution| {
-                    const prefix = switch (solution.number) {
-                        1 => "🏆 ",
-                        2 => "🥈 ",
-                        3 => "🥉 ",
-                        else => "",
-                    };
-                    const solution_string = try std.fmt.allocPrint(allocator, "{s}Solution {d}:", .{ prefix, solution.number });
+                .gameweek => |gw| {
+                    const chip_active = if (gw.chip_active != null) try std.fmt.allocPrint(allocator, "{s} ACTIVE! 🔥", .{gw.chip_active.?}) else "";
 
-                    try move_list.append(solution_string);
+                    var buy_transfers_list = ManagedString.init(allocator);
+                    defer buy_transfers_list.deinit();
+
+                    var sell_transfers_list = ManagedString.init(allocator);
+                    defer sell_transfers_list.deinit();
+
+                    for (gw.transfers) |transfer| {
+                        switch (transfer.action) {
+                            .buy => {
+                                try buy_transfers_list.append(transfer.player);
+                            },
+                            .sell => {
+                                try sell_transfers_list.append(transfer.player);
+                            },
+                        }
+                    }
+
+                    const buy_transfers = try std.mem.join(allocator, ",", try buy_transfers_list.list.toOwnedSlice());
+                    defer allocator.free(buy_transfers);
+
+                    const sell_transfers = try std.mem.join(allocator, ",", try sell_transfers_list.list.toOwnedSlice());
+                    defer allocator.free(sell_transfers);
+
+                    const gw_string = try std.fmt.allocPrint(allocator, "GW{d}:{s}{s}{s}{s}", .{
+                        gw.gameweek,
+                        chip_active,
+                        buy_transfers,
+                        if (buy_transfers.len != 0) " > " else "",
+                        sell_transfers,
+                    });
+                    try gameweek_moves.append(gw_string);
                 },
-                .gameweek_moves => |gameweek_moves| {
-                    const move = try std.fmt.allocPrint(allocator, "GW{d}: {s}", .{ gameweek_moves.gameweek, gameweek_moves.moves });
-
-                    try move_list.append(move);
+                .solution_start => {
+                    solution_index += 1;
                 },
-                .done => {
-                    const move_string = try std.mem.join(allocator, "\n", move_list.list.items);
-                    defer allocator.free(move_string);
+                .solution_end => {
+                    //TODO: fix memory leak (defer allocator.free(...) doesn't work due to global scope of fields)
+                    const gameweeks = try std.mem.join(allocator, "\n", try gameweek_moves.list.toOwnedSlice());
 
-                    const content = try std.fmt.allocPrint(allocator, "Solve complete!\n{s}", .{move_string});
-                    defer allocator.free(content);
-
-                    const edit_msg_content = Discord.Partial(Discord.CreateMessage){
-                        .content = content,
+                    //TODO: fix memory leak (defer allocator.free(...) doesn't work due to global scope of fields)
+                    const solution_name = try std.fmt.allocPrint(allocator, "Solution {}", .{solution_index});
+                    try fields.append(.{ .name = solution_name, .value = gameweeks });
+                    const embed = Discord.Embed{
+                        .title = try std.fmt.allocPrint(allocator, "Regular solve \"{s}\"", .{"example solve name"}),
+                        // .description = "description",
+                        .color = 0x804440,
+                        .fields = fields.items,
                     };
 
-                    const edited_msg = try session.editMessage(message.channel_id, m.id, edit_msg_content);
-                    defer edited_msg.deinit();
-                    break :outer;
+                    defer allocator.free(embed.title.?);
+                    var embeds = [_]Discord.Embed{embed};
+                    const msg = try session.editMessage(message.channel_id, m.id, Discord.Partial(Discord.CreateMessage){
+                        .embeds = &embeds,
+                    });
+                    defer msg.deinit();
                 },
                 .solver_error => |solver_error| {
-                    std.debug.print("Solver error caught: {d}\n", .{solver_error.message});
+                    std.debug.print("Solver error caught: {s}\n", .{solver_error.message});
                     const msg = Discord.Partial(Discord.CreateMessage){
                         .content = "The solver ran into an error!",
                     };
 
                     const edited_msg = try session.editMessage(message.channel_id, m.id, msg);
                     defer edited_msg.deinit();
+                },
+                .done => {
+                    break :outer;
                 },
                 else => {
                     // std.debug.print("item: {}\n", .{item});
