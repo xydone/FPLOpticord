@@ -372,6 +372,7 @@ const SolverError = struct {
 // - xydone
 test "regular solve" {
     const allocator = std.testing.allocator;
+
     var response = Response{
         .list = .init(allocator),
         .mutex = std.Thread.Mutex{},
@@ -412,7 +413,7 @@ test "regular solve" {
             .solution_end => iteration += 1,
             .gameweek => |gw| {
                 for (gw.transfers, 0..) |transfers, i| {
-                    // try std.testing.expectEqual(iterations[iteration], gw.transfers);
+                    try std.testing.expectEqual(iterations[iteration][i].action, transfers.action);
                     try std.testing.expectEqualStrings(iterations[iteration][i].player, transfers.player);
                 }
             },

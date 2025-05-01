@@ -40,10 +40,11 @@ fn handleCommand(
         var timer = try std.time.Timer.start();
         var time_requirements: u64 = 0;
         var time_callback: u64 = 0;
-        const logger = MessageHandlerLogger.init(allocator, message.content.?, .{
+        const logger = try MessageHandlerLogger.init(allocator, message.content.?, .{
             .requirements = &time_requirements,
             .callback = &time_callback,
         });
+        defer logger.deinit();
         try logger.printReceived();
         defer logger.print() catch {};
 
@@ -84,16 +85,31 @@ const Requirements = struct {
 const getDatetimeString = @import("../util/util.zig").getDatetimeString;
 
 pub const MessageHandlerLogger = struct {
+    id: []const u8,
     allocator: std.mem.Allocator,
     command: []const u8,
     times: Times,
 
-    pub fn init(allocator: std.mem.Allocator, command: []const u8, times: Times) MessageHandlerLogger {
+    pub fn init(allocator: std.mem.Allocator, command: []const u8, times: Times) !MessageHandlerLogger {
+        const command_no_space = try std.mem.replaceOwned(u8, allocator, command, " ", "");
+        defer allocator.free(command_no_space);
+        var prng = std.Random.DefaultPrng.init(blk: {
+            var seed: u64 = undefined;
+            try std.posix.getrandom(std.mem.asBytes(&seed));
+            break :blk seed;
+        });
+        const random_number = prng.random().int(u8);
+        const id = try std.fmt.allocPrint(allocator, "{s}#{d}", .{ command_no_space, random_number });
         return MessageHandlerLogger{
+            .id = id,
             .allocator = allocator,
             .command = command,
             .times = times,
         };
+    }
+
+    pub fn deinit(self: MessageHandlerLogger) void {
+        self.allocator.free(self.id);
     }
 
     pub const Times = struct {
@@ -101,23 +117,26 @@ pub const MessageHandlerLogger = struct {
         callback: *u64,
     };
 
-    pub fn printReceived(self: MessageHandlerLogger) !void {
+    /// Caller owns memory
+    fn _printReceived(self: MessageHandlerLogger) ![]u8 {
         const datetime = try getDatetimeString(self.allocator, .now);
-        std.debug.print("{s} \"{s}\" received!\n", .{
+        defer self.allocator.free(datetime);
+
+        return try std.fmt.allocPrint(self.allocator, "{s} \"{s}\" received! (id: {s})\n", .{
             datetime,
             self.command,
+            self.id,
         });
     }
 
-    /// Coloring depends on execution time, rather than execution status.
-    ///
-    /// TODO: make it depend on execution status
-    pub fn print(self: MessageHandlerLogger) !void {
+    /// Caller owns memory
+    fn _print(self: MessageHandlerLogger) ![]u8 {
         const datetime = try getDatetimeString(self.allocator, .now);
+        defer self.allocator.free(datetime);
 
         const total_time = self.times.requirements.* + self.times.callback.*;
 
-        std.debug.print("{s} \"{s}\" in {s}{d:.2}ms\x1b[0m (requirements: {d:.2}ms, callback: {d:.2}ms)\n", .{
+        return try std.fmt.allocPrint(self.allocator, "{s} \"{s}\" in {s}{d:.2}ms\x1b[0m (requirements: {d:.2}ms, callback: {d:.2}ms) (id: {s})\n", .{
             datetime,
             self.command,
             //arbitrary 2s
@@ -131,6 +150,44 @@ pub const MessageHandlerLogger = struct {
             @as(f64, @floatFromInt(total_time)) / std.time.ns_per_ms,
             @as(f64, @floatFromInt(self.times.requirements.*)) / std.time.ns_per_ms,
             @as(f64, @floatFromInt(self.times.callback.*)) / std.time.ns_per_ms,
+            self.id,
         });
     }
+    /// Coloring depends on execution time, rather than execution status.
+    ///
+    /// TODO: make it depend on execution status
+    pub fn print(self: MessageHandlerLogger) !void {
+        const string = try self._print();
+        defer self.allocator.free(string);
+        std.debug.print("{s}", .{string});
+    }
+    pub fn printReceived(self: MessageHandlerLogger) !void {
+        const string = try self._printReceived();
+        defer self.allocator.free(string);
+        std.debug.print("{s}", .{string});
+    }
 };
+
+test "MessageHandlerLogger" {
+    const allocator = std.testing.allocator;
+
+    var time_requirements: u64 = 0;
+    var time_callback: u64 = 5000;
+    const logger = try MessageHandlerLogger.init(allocator, "!testcommand", .{
+        .requirements = &time_requirements,
+        .callback = &time_callback,
+    });
+    defer logger.deinit();
+    const printReceived = try logger._printReceived();
+    defer allocator.free(printReceived);
+    const print = try logger._print();
+    defer allocator.free(print);
+
+    const expected_print_received = try std.fmt.allocPrint(allocator, "\"{s}\" received! (id: {s})\n", .{ logger.command, logger.id });
+    defer allocator.free(expected_print_received);
+    const expected_print = try std.fmt.allocPrint(allocator, "\"{s}\" in \x1b[32m0.01ms\x1b[0m (requirements: 0.00ms, callback: 0.01ms) (id: {s})\n", .{ logger.command, logger.id });
+    defer allocator.free(expected_print);
+
+    try std.testing.expectStringEndsWith(printReceived, expected_print_received);
+    try std.testing.expectStringEndsWith(print, expected_print);
+}

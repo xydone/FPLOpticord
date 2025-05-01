@@ -189,6 +189,7 @@ pub const DatetimeOptions = enum {
     use_datetime,
 };
 
+/// Caller owns memory
 pub fn getDatetimeString(allocator: std.mem.Allocator, datetime_options: union(DatetimeOptions) {
     now,
     use_datetime: struct { datetime: zdt.Datetime },
